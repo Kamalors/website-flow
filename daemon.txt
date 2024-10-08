@@ -1,0 +1,8 @@
+{
+  "runtimes": {
+    "containerd": {
+      "path": "containerd-shim"
+    }
+  },
+  "default-runtime": "containerd"
+}
