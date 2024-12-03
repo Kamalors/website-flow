@@ -1,158 +1,150 @@
 #!/bin/bash
 
-# Variables globales
-CONF_NFTABLES="/etc/nftables.conf"
-REPERTOIRE_BACKUP="/etc/nftables_backups"
+# Chemins par défaut
+NFT_CONFIG="/etc/nftables.conf"
+BACKUP_DIR="/var/backups/nftables"
 
-# Fonction pour afficher un message d'erreur
-afficher_erreur() {
-    printf "Erreur : %s\n" "$1" >&2
+# Vérifier les permissions root
+if [[ $EUID -ne 0 ]]; then
+    echo "Ce script doit être exécuté en tant que root."
+    exit 1
+fi
+
+# Crée le répertoire de sauvegarde si nécessaire
+mkdir -p "$BACKUP_DIR"
+
+# Fonction pour afficher le menu
+function show_menu() {
+    echo "=== Gestion des règles nftables ==="
+    echo "1) Ajouter des règles prédéfinies"
+    echo "2) Ajouter une règle manuelle"
+    echo "3) Lister les règles"
+    echo "4) Supprimer une règle"
+    echo "5) Sauvegarder la configuration"
+    echo "6) Restaurer une configuration"
+    echo "7) Quitter"
+    echo "==================================="
+    echo -n "Choix : "
 }
 
-# Fonction pour afficher un menu principal
-menu_principal() {
-    printf "\nMenu principal - Gestion de nftables\n"
-    printf "1) Ajouter une règle\n"
-    printf "2) Supprimer une règle\n"
-    printf "3) Lister les règles\n"
-    printf "4) Sauvegarder la configuration\n"
-    printf "5) Restaurer la configuration\n"
-    printf "6) Gérer les backups\n"
-    printf "7) Quitter\n"
-    printf "Sélectionnez une option : "
-}
+# Ajouter des règles prédéfinies
+function add_predefined_rules() {
+    echo "=== Ajouter des règles prédéfinies ==="
+    echo "1) Deny All (Refuser tout le trafic)"
+    echo "2) Autoriser SSH (port 22)"
+    echo "3) Autoriser HTTP/HTTPS (ports 80, 443)"
+    echo "4) Autoriser ICMP "
+    echo "======================================="
+    echo -n "Choix : "
+    read choice
 
-# Fonction pour ajouter une règle
-ajouter_regle() {
-    local table chaine regle
-    read -p "Nom de la table (ex: filter_ipv4): " table
-    read -p "Nom de la chaîne (ex: input): " chaine
-    read -p "Règle à ajouter (ex: ip saddr 192.168.1.0/24 accept): " regle
+    case $choice in
+        1)
+            nft add rule inet filter input drop
+            echo "Règle 'Deny All' ajoutée."
+            ;;
+        2)
+            echo -n "Entrez l'adresse IP à autoriser pour SSH : "
+            read ip
+            nft add rule inet filter input ip saddr $ip tcp dport 22 accept
+            echo "Règle SSH ajoutée pour l'IP $ip."
+            ;;
+        3)
+            echo -n "Entrez l'adresse IP à autoriser pour HTTP/HTTPS : "
+            read ip
+            nft add rule inet filter input ip saddr $ip tcp dport {80, 443} accept
+            echo "Règles HTTP/HTTPS ajoutées pour l'IP $ip."
+            ;;
 
-    if nft add rule "$table" "$chaine" $regle; then
-        printf "Règle ajoutée avec succès.\n"
-    else
-        afficher_erreur "Échec de l'ajout de la règle."
-    fi
-}
+        4)
+            echo -n "Entrez l'adresse IP à autoriser pour ICMP : "
+            read ip
+            nft add rule inet filter input ip protocol icmp accept
+            echo "Règle ICMP ajoutée pour autoriser les paquets ICMP."
+            ;;
 
-# Fonction pour supprimer une règle
-supprimer_regle() {
-    local table chaine handle
-    read -p "Nom de la table (ex: filter): " table
-    read -p "Nom de la chaîne (ex: input): " chaine
-    read -p "Handle de la règle à supprimer : " handle
-
-    if nft delete rule "$table" "$chaine" handle "$handle"; then
-        printf "Règle supprimée avec succès.\n"
-    else
-        afficher_erreur "Échec de la suppression de la règle."
-    fi
-}
-
-# Fonction pour lister les règles
-lister_regles() {
-    if nft list ruleset; then
-        printf "\nListe des règles affichée ci-dessus.\n"
-    else
-        afficher_erreur "Échec de la liste des règles."
-    fi
-}
-
-# Fonction pour sauvegarder la configuration
-sauvegarder_config() {
-    if nft list ruleset > "$CONF_NFTABLES"; then
-        printf "Configuration sauvegardée dans %s.\n" "$CONF_NFTABLES"
-    else
-        afficher_erreur "Échec de la sauvegarde de la configuration."
-    fi
-}
-
-# Fonction pour restaurer la configuration
-restaurer_config() {
-    if nft -f "$CONF_NFTABLES"; then
-        printf "Configuration restaurée à partir de %s.\n" "$CONF_NFTABLES"
-    else
-        afficher_erreur "Échec de la restauration de la configuration."
-    fi
-}
-
-# Fonction pour gérer les backups
-gerer_backups() {
-    mkdir -p "$REPERTOIRE_BACKUP"
-
-    local option
-    printf "\nMenu - Gestion des Backups\n"
-    printf "1) Sauvegarder dans un fichier backup\n"
-    printf "2) Restaurer depuis un fichier backup\n"
-    printf "3) Lister les fichiers backup\n"
-    printf "4) Quitter\n"
-    printf "Sélectionnez une option : "
-    read -r option
-
-    case $option in
-        1) sauvegarder_backup ;;
-        2) restaurer_backup ;;
-        3) lister_backups ;;
-        4) return ;;
-        *) afficher_erreur "Option invalide, veuillez réessayer." ;;
+        *)
+            echo "Choix invalide."
+            ;;
     esac
 }
 
-# Fonction pour sauvegarder la configuration dans un fichier de backup
-sauvegarder_backup() {
-    local nom_fichier
-    read -p "Nom du fichier de backup (sans extension): " nom_fichier
-    local chemin_fichier="$REPERTOIRE_BACKUP/$nom_fichier.nft"
-    
-    if nft list ruleset > "$chemin_fichier"; then
-        printf "Backup créé : %s\n" "$chemin_fichier"
+# Ajouter une règle manuelle
+function add_manual_rule() {
+    echo "Entrez la règle nftables manuelle (ex : 'add rule inet filter input ip saddr 192.168.1.1 drop') :"
+    read rule
+    nft $rule
+    echo "Règle ajoutée : $rule"
+}
+
+# Lister les règles
+function list_rules() {
+    nft list ruleset
+}
+
+# Supprimer une règle
+function delete_rule() {
+    echo "Entrez la chaîne contenant la règle à supprimer (ex : 'inet filter input') :"
+    read chain
+    echo "Entrez le numéro de la règle à supprimer (numéro dans nft list ruleset) :"
+    read rule_num
+    nft delete rule $chain handle $rule_num
+    echo "Règle supprimée de $chain, handle $rule_num."
+}
+
+# Sauvegarder la configuration
+function backup_config() {
+    local backup_file="$BACKUP_DIR/nftables_$(date +%Y%m%d_%H%M%S).conf"
+    nft list ruleset > "$backup_file"
+    echo "Sauvegarde effectuée dans $backup_file."
+}
+
+# Restaurer la configuration
+function restore_config() {
+    echo "=== Sauvegardes disponibles ==="
+    ls -1 "$BACKUP_DIR"
+    echo "==============================="
+    echo -n "Entrez le nom du fichier de sauvegarde à restaurer : "
+    read backup_file
+
+    if [[ -f "$BACKUP_DIR/$backup_file" ]]; then
+        nft -f "$BACKUP_DIR/$backup_file"
+        echo "Configuration restaurée depuis $backup_file."
     else
-        afficher_erreur "Échec de la création du backup."
+        echo "Fichier de sauvegarde introuvable."
     fi
 }
 
-# Fonction pour restaurer une configuration à partir d'un fichier de backup
-restaurer_backup() {
-    local nom_fichier
-    read -p "Nom du fichier de backup à restaurer (sans extension): " nom_fichier
-    local chemin_fichier="$REPERTOIRE_BACKUP/$nom_fichier.nft"
+# Boucle principale
+while true; do
+    show_menu
+    read choice
 
-    if [[ -f "$chemin_fichier" ]]; then
-        if nft -f "$chemin_fichier"; then
-            printf "Configuration restaurée depuis %s.\n" "$chemin_fichier"
-        else
-            afficher_erreur "Échec de la restauration du backup."
-        fi
-    else
-        afficher_erreur "Fichier backup non trouvé : $chemin_fichier"
-    fi
-}
-
-# Fonction pour lister les fichiers de backup disponibles
-lister_backups() {
-    printf "\nFichiers de backup disponibles dans %s:\n" "$REPERTOIRE_BACKUP"
-    ls -1 "$REPERTOIRE_BACKUP" 2>/dev/null || afficher_erreur "Aucun backup disponible."
-}
-
-# Fonction principale
-principal() {
-    while true; do
-        menu_principal
-        read -r choix
-
-        case $choix in
-            1) ajouter_regle ;;
-            2) supprimer_regle ;;
-            3) lister_regles ;;
-            4) sauvegarder_config ;;
-            5) restaurer_config ;;
-            6) gerer_backups ;;
-            7) printf "Au revoir !\n"; exit 0 ;;
-            *) afficher_erreur "Option invalide, veuillez réessayer." ;;
-        esac
-    done
-}
-
-# Exécution du script
-principal
+    case $choice in
+        1)
+            add_predefined_rules
+            ;;
+        2)
+            add_manual_rule
+            ;;
+        3)
+            list_rules
+            ;;
+        4)
+            delete_rule
+            ;;
+        5)
+            backup_config
+            ;;
+        6)
+            restore_config
+            ;;
+        7)
+            echo "Au revoir !"
+            exit 0
+            ;;
+        *)
+            echo "Choix invalide. Réessayez."
+            ;;
+    esac
+done
